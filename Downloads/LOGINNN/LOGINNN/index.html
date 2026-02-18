@@ -704,6 +704,11 @@
                 <h3>Passport Photo</h3>
                 <p>Upload photo and get professional passport sized images ready for print.</p>
             </div>
+            <div class="card card-4">
+                <div class="badge-new">New</div>
+                <h3>Voting Card PDF</h3>
+                <p>Upload photo and get professional passport sized images ready for print.</p>
+            </div>
         </div>
     </main>
 
@@ -1216,85 +1221,99 @@
         await loadPanHistory();
     }
 
-    async function loadPanHistory() {
-        const tbody = document.querySelector('#historyTable tbody');
-        const noHistoryMsg = document.getElementById('noHistoryMsg');
+   // Load PAN History from backend
+async function loadPanHistory() {
+    const tbody = document.querySelector('#historyTable tbody');
+    const noHistoryMsg = document.getElementById('noHistoryMsg');
+    
+    try {
+        // Show loading
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px;">Loading history...</td></tr>';
         
-        try {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px;">Loading history...</td></tr>';
+        const response = await fetch(`${API_BASE_URL}/pan-history/get`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ userId: userSessionId })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.history.length > 0) {
+            tbody.innerHTML = '';
+            noHistoryMsg.classList.add('hidden');
             
-            const response = await fetch(`${API_BASE_URL}/pan-history/get`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ userId: userSessionId })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success && data.history.length > 0) {
-                tbody.innerHTML = '';
-                noHistoryMsg.classList.add('hidden');
+            data.history.forEach(item => {
+                const row = document.createElement('tr');
                 
-                data.history.forEach(item => {
-                    const row = document.createElement('tr');
-                    
-                    let statusClass = 'badge-pending';
-                    let statusText = item.status;
-                    
-                    if (item.status === 'completed' || item.status === 'active') {
-                        statusClass = 'badge-active';
-                        statusText = item.status === 'active' ? 'Active' : 'Completed';
-                    }
-                    
-                    row.innerHTML = `
-                        <td>${item.aadhar}</td>
-                        <td style="font-family: monospace; font-weight: ${item.isPanVisible ? 'bold' : 'normal'};">
-                            ${item.panNumber}
-                            ${item.isPanVisible ? '<span style="color: green; margin-left: 5px;">✓</span>' : ''}
-                        </td>
-                        <td>${item.serviceName}</td>
-                        <td>${item.date}</td>
-                        <td><span class="badge ${statusClass}">${statusText}</span></td>
-                    `;
-                    
-                    tbody.appendChild(row);
-                });
-            } else {
-                tbody.innerHTML = '';
-                noHistoryMsg.classList.remove('hidden');
-            }
-        } catch (error) {
-            console.error('Error loading history:', error);
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: red;">Error loading history. Please try again.</td></tr>';
-        }
-    }
-
-    // === ADMIN SIMULATION ===
-    async function simulateAdminUpdate() {
-        try {
-            const response = await fetch(`${API_BASE_URL}/admin/reveal-pan`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ adminKey: 'admin123' })
+                // Determine status badge class
+                let statusClass = 'badge-pending';
+                let statusText = item.status;
+                
+                if (item.status === 'completed' || item.status === 'active') {
+                    statusClass = 'badge-active';
+                    statusText = item.status === 'active' ? 'Active' : 'Completed';
+                }
+                
+                // Format PAN display
+                let panDisplay = item.panNumber;
+                if (!item.isPanVisible) {
+                    panDisplay = '••••••••• (Pending)';
+                } else if (item.panNumber) {
+                    // Format PAN with proper display
+                    panDisplay = item.panNumber;
+                } else {
+                    panDisplay = 'Not Available';
+                }
+                
+                row.innerHTML = `
+                    <td>${item.aadhar}</td>
+                    <td style="font-family: monospace; font-weight: ${item.isPanVisible ? 'bold' : 'normal'}; color: ${item.isPanVisible ? '#059669' : '#999'};">
+                        ${panDisplay}
+                        ${item.isPanVisible ? '<span style="color: green; margin-left: 5px;">✓</span>' : ''}
+                    </td>
+                    <td>${item.serviceName}</td>
+                    <td>${item.date}</td>
+                    <td><span class="badge ${statusClass}">${statusText}</span></td>
+                `;
+                
+                tbody.appendChild(row);
             });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                await loadPanHistory();
-                alert(`✅ Admin update simulated! ${data.count} PAN numbers revealed.`);
-            } else {
-                alert('❌ Failed to update: ' + data.error);
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            alert('Network error. Please try again.');
+        } else {
+            tbody.innerHTML = '';
+            noHistoryMsg.classList.remove('hidden');
         }
+    } catch (error) {
+        console.error('Error loading history:', error);
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: red;">Error loading history. Please try again.</td></tr>';
     }
+}
+
+// Update simulateAdminUpdate function
+async function simulateAdminUpdate() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/admin/reveal-pan`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ adminKey: 'admin123' })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            await loadPanHistory(); // Reload history
+            alert(`✅ Admin update simulated! ${data.count} PAN numbers revealed.`);
+        } else {
+            alert('❌ Failed to update: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Network error. Please try again.');
+    }
+}
 
     // === LL FUNCTIONS ===
     function showLLForm() {
@@ -1320,66 +1339,131 @@
         localStorage.setItem('llSearchHistory', JSON.stringify(history));
     }
 
-    function submitLLForm() {
-        const appNo = document.getElementById('llAppNoInput').value;
-        const dob = document.getElementById('llDobInput').value;
-        const pass = document.getElementById('llPassInput').value;
-        
-        if(!appNo || !dob || !pass) { 
-            alert("Please fill all fields."); 
-            return; 
-        }
-
-        saveLLRecord(appNo, dob, pass, "LL Test Service", "Pending");
-
-        document.querySelector('#llTable tbody').innerHTML = `<tr><td>${appNo}</td><td>${dob}</td><td>${pass}</td><td>LL Test Service</td><td style="color: orange; font-weight: bold;">Pending</td></tr>`;
-        
-        document.getElementById('ll-input-section').classList.add('hidden');
-        document.getElementById('ll-result-section').classList.remove('hidden');
+    // Submit LL Application to Backend
+async function submitLLForm() {
+    const appNo = document.getElementById('llAppNoInput').value.trim();
+    const dob = document.getElementById('llDobInput').value;
+    const password = document.getElementById('llPassInput').value;
+    
+    if(!appNo || !dob || !password) { 
+        alert("Please fill all fields."); 
+        return; 
     }
 
-    function showLLHistory() {
-        hideAllPages();
-        llPage.classList.remove('hidden');
-        
-        document.getElementById('ll-input-section').classList.add('hidden');
-        document.getElementById('ll-result-section').classList.add('hidden');
-        document.getElementById('ll-history-section').classList.remove('hidden');
+    // Show loading
+    const submitBtn = document.querySelector('#ll-input-section .submit-btn');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Submitting...';
+    submitBtn.disabled = true;
 
-        const history = JSON.parse(localStorage.getItem('llSearchHistory')) || [];
-        const tableBody = document.querySelector('#llHistoryTable tbody');
-        const noDataMsg = document.getElementById('noLLHistoryMsg');
-        
-        tableBody.innerHTML = "";
-        
-        const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
-        const now = Date.now();
-        
-        const validHistory = history.filter(item => {
-            const itemTime = new Date(item.timestamp).getTime();
-            return (now - itemTime) < fifteenDaysMs;
+    try {
+        const response = await fetch(`${API_BASE_URL}/submit-ll`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ 
+                appNo: appNo, 
+                dob: dob, 
+                password: password 
+            })
         });
 
-        if (validHistory.length !== history.length) {
-            localStorage.setItem('llSearchHistory', JSON.stringify(validHistory));
-        }
+        const data = await response.json();
 
-        if (validHistory.length === 0) {
-            noDataMsg.classList.remove('hidden');
+        if (data.success) {
+            // Save to localStorage for history (backup)
+            saveLLRecord(appNo, dob, password, "LL Test Application", "Pending");
+
+            // Show success message
+            alert('✅ LL Application submitted successfully!');
+
+            // Show result in table
+            const resultHtml = `<tr>
+                <td>${appNo}</td>
+                <td>${dob}</td>
+                <td>********</td>
+                <td>LL Test Application</td>
+                <td><span class="badge badge-pending">Pending</span></td>
+            </tr>`;
+            document.querySelector('#llTable tbody').innerHTML = resultHtml;
+            
+            // Switch to result view
+            document.getElementById('ll-input-section').classList.add('hidden');
+            document.getElementById('ll-result-section').classList.remove('hidden');
+            
+            // Clear form
+            document.getElementById('llAppNoInput').value = '';
+            document.getElementById('llDobInput').value = '';
+            document.getElementById('llPassInput').value = '';
         } else {
-            noDataMsg.classList.add('hidden');
-            validHistory.reverse().forEach(item => {
-                const row = `<tr>
-                    <td>${item.appNo}</td>
-                    <td>${item.dob}</td>
-                    <td>${item.pass}</td>
-                    <td>${item.service}</td>
-                    <td style="color: orange; font-weight: bold;">${item.status}</td>
-                </tr>`;
-                tableBody.innerHTML += row;
-            });
+            alert('Error: ' + (data.error || 'Something went wrong'));
         }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Network error. Please try again.');
+    } finally {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
     }
+}
+
+// Update showLLHistory to fetch from backend
+async function showLLHistory() {
+    hideAllPages();
+    llPage.classList.remove('hidden');
+    
+    document.getElementById('ll-input-section').classList.add('hidden');
+    document.getElementById('ll-result-section').classList.add('hidden');
+    document.getElementById('ll-history-section').classList.remove('hidden');
+
+    const tbody = document.querySelector('#llHistoryTable tbody');
+    const noDataMsg = document.getElementById('noLLHistoryMsg');
+    
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px;">Loading history...</td></tr>';
+    
+    try {
+        // Fetch from backend
+        const response = await fetch(`${API_BASE_URL}/ll-applications`);
+        const applications = await response.json();
+        
+        if (applications.length > 0) {
+            tbody.innerHTML = '';
+            noDataMsg.classList.add('hidden');
+            
+            applications.forEach(app => {
+                let statusClass = 'badge-pending';
+                let statusText = app.status;
+                
+                if (app.status === 'active') {
+                    statusClass = 'badge-active';
+                    statusText = 'Active';
+                } else if (app.testStatus === 'passed') {
+                    statusClass = 'badge-active';
+                    statusText = 'Passed';
+                } else if (app.testStatus === 'failed') {
+                    statusClass = 'badge-pending';
+                    statusText = 'Failed';
+                }
+                
+                const row = `<tr>
+                    <td>${app.appNo || '-'}</td>
+                    <td>${app.dob || '-'}</td>
+                    <td>********</td>
+                    <td>LL Test Application</td>
+                    <td><span class="badge ${statusClass}">${statusText}</span></td>
+                </tr>`;
+                tbody.innerHTML += row;
+            });
+        } else {
+            tbody.innerHTML = '';
+            noDataMsg.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Error loading LL history:', error);
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 20px; color: red;">Error loading history</td></tr>';
+    }
+}
 
     // === WALLET FUNCTIONS ===
     function showWalletForm() {

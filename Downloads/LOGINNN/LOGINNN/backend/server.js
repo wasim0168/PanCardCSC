@@ -185,74 +185,162 @@ app.get('/api/applications/:id', async (req, res) => {
 });
 
 // Update application
+// Update application
+// Update the existing PUT endpoint to also sync PAN history
 app.put('/api/applications/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const updates = req.body;
 
-        const allowedFields = ['appNo', 'aadhar', 'dob', 'walletBal', 'status', 'textFeed', 'password', 'name', 'mobile'];
-        const updateFields = [];
-        const params = [];
-
-        allowedFields.forEach(field => {
-            if (updates[field] !== undefined) {
-                const dbField = field === 'walletBal' ? 'wallet_bal' :
-                               field === 'appNo' ? 'app_no' :
-                               field === 'textFeed' ? 'text_feed' :
-                               field === 'dob' ? 'dob' :
-                               field === 'aadhar' ? 'aadhar' :
-                               field === 'password' ? 'password' :
-                               field === 'status' ? 'status' :
-                               field === 'name' ? 'name' :
-                               field === 'mobile' ? 'mobile' : null;
-                
-                if (dbField) {
-                    updateFields.push(`${dbField} = ?`);
-                    params.push(updates[field]);
-                }
-            }
-        });
-
-        if (updateFields.length === 0) {
-            return res.status(400).json({ error: 'No valid fields to update' });
-        }
-
-        params.push(id);
-        const query = `UPDATE applications SET ${updateFields.join(', ')} WHERE application_id = ?`;
-        
-        const [result] = await pool.query(query, params);
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'Application not found' });
-        }
-
-        const [updatedApp] = await pool.query(
-            'SELECT * FROM applications WHERE application_id = ?',
-            [id]
-        );
-
-        const app = updatedApp[0];
-        const transformedApp = {
-            id: app.application_id,
-            date: app.date,
-            type: app.type,
-            name: app.name,
-            mobile: app.mobile,
-            aadhar: app.aadhar,
-            appNo: app.app_no,
-            dob: app.dob,
-            password: app.password,
-            walletBal: app.wallet_bal,
-            status: app.status,
-            textFeed: app.text_feed
+        // Define allowed fields and their mappings
+        const fieldMappings = {
+            'appNo': 'app_no',
+            'aadhar': 'aadhar',
+            'panNumber': 'pan_number',
+            'dob': 'dob',
+            'walletBal': 'wallet_bal',
+            'status': 'status',
+            'textFeed': 'text_feed',
+            'password': 'password',
+            'name': 'name',
+            'mobile': 'mobile'
         };
 
-        res.json({ success: true, application: transformedApp });
+        // Validate status if it's being updated
+        if (updates.status) {
+            const validStatuses = ['pending', 'active', 'completed'];
+            if (!validStatuses.includes(updates.status)) {
+                return res.status(400).json({ 
+                    error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` 
+                });
+            }
+        }
+
+        // Validate PAN number format if provided
+        if (updates.panNumber && updates.panNumber.trim() !== '') {
+            const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+            if (!panRegex.test(updates.panNumber)) {
+                return res.status(400).json({ 
+                    error: 'Invalid PAN number format. Must be 10 characters: 5 letters, 4 numbers, 1 letter (e.g., ABCDE1234F)' 
+                });
+            }
+        }
+
+        // Handle empty date values - convert to NULL
+        if (updates.dob !== undefined) {
+            if (updates.dob === null || updates.dob === '' || updates.dob === 'Invalid Date') {
+                updates.dob = null;
+            } else {
+                const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+                if (!dateRegex.test(updates.dob)) {
+                    return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+                }
+            }
+        }
+
+        // Start transaction
+        const connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        try {
+            // Build dynamic update query
+            const updateFields = [];
+            const params = [];
+
+            Object.keys(updates).forEach(field => {
+                if (fieldMappings[field] && updates[field] !== undefined) {
+                    updateFields.push(`${fieldMappings[field]} = ?`);
+                    params.push(updates[field]);
+                }
+            });
+
+            if (updateFields.length === 0) {
+                await connection.rollback();
+                connection.release();
+                return res.status(400).json({ error: 'No valid fields to update' });
+            }
+
+            // Add ID to params
+            params.push(id);
+
+            // Construct and execute query
+            const query = `UPDATE applications SET ${updateFields.join(', ')} WHERE application_id = ?`;
+            
+            await connection.query(query, params);
+
+            // If PAN number was updated, sync with history
+            if (updates.panNumber) {
+                // Get the aadhar number for this application
+                const [app] = await connection.query(
+                    'SELECT aadhar FROM applications WHERE application_id = ?',
+                    [id]
+                );
+
+                if (app.length > 0 && app[0].aadhar) {
+                    // Update pan_search_history table
+                    await connection.query(
+                        `UPDATE pan_search_history 
+                         SET pan_number = ?, 
+                             status = 'completed', 
+                             is_pan_visible = TRUE 
+                         WHERE aadhar_number = ?`,
+                        [updates.panNumber, app[0].aadhar]
+                    );
+                }
+            }
+
+            await connection.commit();
+
+            // Fetch updated application
+            const [updatedApp] = await connection.query(
+                'SELECT * FROM applications WHERE application_id = ?',
+                [id]
+            );
+
+            connection.release();
+
+            if (updatedApp.length === 0) {
+                return res.status(404).json({ error: 'Application not found' });
+            }
+
+            const app = updatedApp[0];
+            const transformedApp = {
+                id: app.application_id,
+                date: app.date,
+                type: app.type,
+                name: app.name,
+                mobile: app.mobile,
+                aadhar: app.aadhar,
+                panNumber: app.pan_number,
+                appNo: app.app_no,
+                dob: app.dob,
+                password: app.password,
+                walletBal: app.wallet_bal,
+                status: app.status,
+                textFeed: app.text_feed
+            };
+
+            res.json({ success: true, application: transformedApp });
+
+        } catch (error) {
+            await connection.rollback();
+            connection.release();
+            throw error;
+        }
+
     } catch (error) {
         console.error('Error updating application:', error);
-        res.status(500).json({ error: 'Server error' });
+        
+        if (error.code === 'ER_TRUNCATED_WRONG_VALUE' || error.code === 'WARN_DATA_TRUNCATED') {
+            return res.status(400).json({ 
+                error: 'Invalid data format. Please check date fields and other inputs.' 
+            });
+        }
+        
+        res.status(500).json({ error: 'Server error: ' + error.message });
     }
 });
+
 
 // Delete application
 app.delete('/api/applications/:id', async (req, res) => {
@@ -466,6 +554,222 @@ app.post('/api/admin/reveal-pan', async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
+
+// ll test app
+
+// Submit LL application
+app.post('/api/submit-ll', async (req, res) => {
+    try {
+        const { appNo, dob, password } = req.body;
+        
+        // Validate input
+        if (!appNo || !dob || !password) {
+            return res.status(400).json({ error: 'All fields are required' });
+        }
+
+        // Check if application already exists
+        const [existing] = await pool.query(
+            'SELECT * FROM applications WHERE app_no = ? AND type = "ll"',
+            [appNo]
+        );
+
+        if (existing.length > 0) {
+            return res.status(400).json({ error: 'Application number already exists' });
+        }
+
+        // Get next application ID
+        const appId = await getNextApplicationId();
+
+        // Insert new LL application
+        const [result] = await pool.query(
+            `INSERT INTO applications 
+            (application_id, app_no, dob, password, type, status, name, mobile, aadhar, document_status) 
+            VALUES (?, ?, ?, ?, 'll', 'pending', ?, ?, ?, 'pending')`,
+            [
+                appId,
+                appNo,
+                dob,
+                password,
+                `User ${appId}`,
+                '9876543210', // Default mobile
+                '000000000000' // Default aadhar
+            ]
+        );
+
+        // Create test result entry
+        await pool.query(
+            `INSERT INTO ll_test_results (application_id, test_status) VALUES (?, 'pending')`,
+            [appId]
+        );
+
+        // Fetch the newly created application
+        const [newApp] = await pool.query(
+            `SELECT a.*, lr.test_status, lr.test_score, lr.examiner_remarks 
+             FROM applications a 
+             LEFT JOIN ll_test_results lr ON a.application_id = lr.application_id 
+             WHERE a.id = ?`,
+            [result.insertId]
+        );
+
+        res.json({ 
+            success: true, 
+            message: 'LL application submitted successfully',
+            application: transformLLApp(newApp[0])
+        });
+
+    } catch (error) {
+        console.error('Error submitting LL application:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Get LL applications with filters
+app.get('/api/ll-applications', async (req, res) => {
+    try {
+        const { search, status } = req.query;
+        
+        let query = `
+            SELECT a.*, lr.test_status, lr.test_score, lr.examiner_remarks, lr.test_date 
+            FROM applications a 
+            LEFT JOIN ll_test_results lr ON a.application_id = lr.application_id 
+            WHERE a.type = 'll'
+        `;
+        const params = [];
+
+        if (status && status !== 'all') {
+            query += ' AND a.status = ?';
+            params.push(status);
+        }
+
+        if (search) {
+            query += ` AND (a.app_no LIKE ? OR a.name LIKE ? OR a.mobile LIKE ? OR a.application_id LIKE ?)`;
+            const searchPattern = `%${search}%`;
+            params.push(searchPattern, searchPattern, searchPattern, searchPattern);
+        }
+
+        query += ' ORDER BY a.created_at DESC';
+
+        const [applications] = await pool.query(query, params);
+        
+        const transformedApps = applications.map(app => transformLLApp(app));
+
+        res.json(transformedApps);
+    } catch (error) {
+        console.error('Error fetching LL applications:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Update LL test result
+app.put('/api/ll-applications/:id/test-result', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { testScore, testStatus, examinerRemarks } = req.body;
+
+        // Validate
+        if (!testStatus || !['pending', 'passed', 'failed'].includes(testStatus)) {
+            return res.status(400).json({ error: 'Invalid test status' });
+        }
+
+        // Update test results
+        await pool.query(
+            `UPDATE ll_test_results 
+             SET test_score = ?, test_status = ?, examiner_remarks = ?, test_date = CURRENT_DATE 
+             WHERE application_id = ?`,
+            [testScore || 0, testStatus, examinerRemarks, id]
+        );
+
+        // If test passed, update main application status
+        if (testStatus === 'passed') {
+            await pool.query(
+                'UPDATE applications SET status = "active" WHERE application_id = ?',
+                [id]
+            );
+        } else if (testStatus === 'failed') {
+            await pool.query(
+                'UPDATE applications SET status = "pending" WHERE application_id = ?',
+                [id]
+            );
+        }
+
+        // Fetch updated application
+        const [updatedApp] = await pool.query(
+            `SELECT a.*, lr.test_status, lr.test_score, lr.examiner_remarks 
+             FROM applications a 
+             LEFT JOIN ll_test_results lr ON a.application_id = lr.application_id 
+             WHERE a.application_id = ?`,
+            [id]
+        );
+
+        res.json({ 
+            success: true, 
+            message: 'Test result updated successfully',
+            application: transformLLApp(updatedApp[0])
+        });
+
+    } catch (error) {
+        console.error('Error updating test result:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Helper function to transform LL application data
+function transformLLApp(app) {
+    return {
+        id: app.application_id,
+        date: app.date,
+        type: app.type,
+        name: app.name,
+        mobile: app.mobile,
+        aadhar: app.aadhar,
+        appNo: app.app_no,
+        dob: app.dob,
+        password: app.password,
+        walletBal: app.wallet_bal,
+        status: app.status,
+        textFeed: app.text_feed,
+        testScore: app.test_score,
+        testStatus: app.test_status || 'pending',
+        examinerRemarks: app.examiner_remarks,
+        documentStatus: app.document_status
+    };
+}
+
+// Get LL application statistics
+app.get('/api/ll-stats', async (req, res) => {
+    try {
+        const [total] = await pool.query(
+            'SELECT COUNT(*) as count FROM applications WHERE type = "ll"'
+        );
+        
+        const [pending] = await pool.query(
+            'SELECT COUNT(*) as count FROM applications WHERE type = "ll" AND status = "pending"'
+        );
+        
+        const [active] = await pool.query(
+            'SELECT COUNT(*) as count FROM applications WHERE type = "ll" AND status = "active"'
+        );
+        
+        const [passed] = await pool.query(
+            `SELECT COUNT(*) as count FROM ll_test_results lr 
+             JOIN applications a ON lr.application_id = a.application_id 
+             WHERE a.type = "ll" AND lr.test_status = "passed"`
+        );
+
+        res.json({
+            total: total[0].count,
+            pending: pending[0].count,
+            active: active[0].count,
+            passed: passed[0].count
+        });
+    } catch (error) {
+        console.error('Error fetching LL stats:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// update pan
+
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
