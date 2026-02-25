@@ -1,0 +1,38 @@
+# Node
+node_modules
+.pnpm-store
+
+# Next.js
+.next
+out
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# VCS
+.git
+.gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode
+.idea
+
+# Docker
+Dockerfile
+docker-compose.yml
+
+# Misc
+*.md
+*.log
